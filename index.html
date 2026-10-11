@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indic language diarization</title>
+<meta name="description" content="Upload speech that mixes English and up to two Indian languages and get an RTTM file, a language-coloured waveform and pooled audio per language. Runs entirely in your browser; nothing is uploaded.">
+<style>
+  :root { --bg:#ffffff; --fg:#111827; --muted:#6b7280; --card:#f3f4f6; --line:#d1d5db; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f172a; --fg:#e5e7eb; --muted:#94a3b8; --card:#1e293b; --line:#334155; --accent:#60a5fa; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:880px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:16px 0; }
+  label { display:block; font-weight:600; margin:0 0 4px; font-size:.9rem; }
+  select, input[type=number], input[type=file] { width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); font:inherit; }
+  .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 18px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  progress { width:100%; height:14px; }
+  #status { color:var(--muted); min-height:1.4em; }
+  #err { color:#dc2626; font-weight:600; }
+  canvas { width:100%; height:auto; border-radius:8px; background:#fff; border:1px solid var(--line); }
+  pre { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; max-height:240px; font-size:.82rem; }
+  audio { width:100%; }
+  .legend span { display:inline-block; margin-right:14px; }
+  .dot { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  small { color:var(--muted); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Language diarization: English + up to two Indian languages</h1>
+  <p class="lead">Upload a recording and get <b>(a)</b> an RTTM file, <b>(b)</b> the waveform coloured by language, and <b>(c)</b> one pooled audio file per language.
+  Everything runs <b>inside your browser</b>: your audio is never uploaded or stored.</p>
+
+  <div class="card">
+    <label for="file">Audio file (wav, mp3, m4a, flac, ogg &mdash; up to 5 minutes)</label>
+    <input id="file" type="file" accept="audio/*,video/mp4">
+    <div class="row" style="margin-top:12px">
+      <div><label for="l1">Indian language 1</label><select id="l1"></select></div>
+      <div><label for="l2">Indian language 2</label><select id="l2"></select></div>
+      <div><label for="ws">Picture: start (s)</label><input id="ws" type="number" min="0" value="0"></div>
+      <div><label for="wl">Picture: length (s)</label><input id="wl" type="number" min="2" value="20"></div>
+    </div>
+    <p><small>Name the languages if you know them (more accurate). Leave both on <i>auto</i> to detect them.</small></p>
+    <button id="go">Diarize</button>
+    <p id="status"></p>
+    <progress id="bar" max="1" value="0" hidden></progress>
+    <p id="err"></p>
+  </div>
+
+  <div id="results" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">Result</h2>
+      <p id="summary"></p>
+      <div class="legend" id="legend"></div>
+      <canvas id="plot" width="1600" height="420"></canvas>
+      <p><button id="dlpng">Download picture (PNG)</button></p>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">RTTM</h2>
+      <pre id="rttm"></pre>
+      <button id="dlrttm">Download RTTM</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Pooled audio per language</h2>
+      <div id="pooled"></div>
+    </div>
+  </div>
+
+  <p><small>Research prototype, trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
+  languages are named, and automatic language detection is less reliable (it often adds a similar-sounding second language).
+  First use downloads the 137 MB model (cached afterwards). Code, method and results:
+  <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
+</main>
+<script src="coi-serviceworker.js"></script>
+<script src="ort.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
