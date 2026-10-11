@@ -252,6 +252,7 @@ async function run(file, opts) {
   const wav = await decodeAudio(file);
   if (wav.length / SR > MAX_SECONDS) throw new Error(`This page accepts up to ${MAX_SECONDS / 60} minutes of audio; yours is ${(wav.length / SR / 60).toFixed(1)} minutes.`);
   if (wav.length / SR < 1) throw new Error("The audio is shorter than one second.");
+  await getSession();                       // first use downloads the model; not counted in the processing time
   const t = performance.now();
   const post = await posteriors(wav);
   const { labels, ids } = decode(post, given);
