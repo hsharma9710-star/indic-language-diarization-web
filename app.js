@@ -339,9 +339,11 @@ function englishEvidence(words, nBins, ws, minLen = 4, smooth = 20) {
 }
 
 // switch speech bins to English where the English evidence is strong; returns how many bins changed
+let lastEngWords = 0;
 async function applyEnglishCheck(wav, labels, tau = 0.25) {
   const ws = await getWordSet();
   const words = await recognisedWords(wav);
+  lastEngWords = words.filter(([, , w]) => ws.has(w) && w.length >= 4).length;
   const ev = englishEvidence(words, labels.length, ws);
   let changed = 0;
   for (let i = 0; i < labels.length; i++) {
@@ -375,7 +377,7 @@ async function run(file, opts) {
   lastName = name;
   lastRttm = makeRttm(segs, name);
   $("rttm").textContent = lastRttm || "(no speech found)";
-  const engNote = useEng ? ` English check: ${(engBins * BIN).toFixed(1)} s switched to English.` : "";
+  const engNote = useEng ? ` English check (v2) ran: ${lastEngWords} English words recognised, ${(engBins * BIN).toFixed(1)} s switched to English.` : "  (English check is off.)";
   $("summary").textContent = (ids.length
     ? "Detected: English, " + ids.map((c) => NAMES[CLASSES[c]]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
     : "No Indian language detected.") + engNote;
