@@ -14,4 +14,4 @@ Model, training and accuracy: https://github.com/hsharma9710-star/indic-language
 (on 27 real recordings about 26 % diarization error with the languages named; the 8-bit model scored 27.6 % vs 28.6 % for the full-precision
 one on an 8-recording check). Research prototype.
 
-Known weak case: Hindi news with Indian-accented English can be labelled all Hindi. The command-line tool on GitHub has an optional English check for this (`english_boost/`); it is not part of the web page.
+English check: an English speech recogniser (wav2vec2-base-960h, int8 ONNX, `model/asr_int8.part0..2`, 122 MB, downloaded on first use and cached) runs after the main model; bins labelled as an Indian language are switched to English when the surrounding ~4 s is made of recognised English words (`english_words.txt`). It is on by default and can be switched off with the tick-box. On 6 held-out real recordings it lowered DER from 24.7 % to 22.5 %. Some English (especially strongly accented) is still missed.

@@ -34,12 +34,12 @@ function setStatus(msg, p) {
   if (p === undefined) { bar.hidden = true; } else { bar.hidden = false; bar.value = p; }
 }
 
-async function fetchModel() {
-  const cache = await caches.open(CACHE).catch(() => null);
+async function fetchParts(parts, cacheName, label, totalMB) {
+  const cache = await caches.open(cacheName).catch(() => null);
   const bufs = [];
   let done = 0;
-  for (let i = 0; i < MODEL_PARTS.length; i++) {
-    const url = MODEL_PARTS[i];
+  for (let i = 0; i < parts.length; i++) {
+    const url = parts[i];
     let resp = cache ? await cache.match(url) : null;
     if (!resp) {
       resp = await fetch(url);
@@ -53,12 +53,16 @@ async function fetchModel() {
       if (d) break;
       chunks.push(value);
       done += value.length;
-      setStatus("downloading the model (first use only)... " + Math.round(done / 1e6) + " MB", Math.min(done / 137e6, 1));
+      setStatus(label + "... " + Math.round(done / 1e6) + " MB", Math.min(done / (totalMB * 1e6), 1));
     }
     bufs.push(new Blob(chunks));
   }
   const all = await new Blob(bufs).arrayBuffer();
   return new Uint8Array(all);
+}
+
+async function fetchModel() {
+  return fetchParts(MODEL_PARTS, CACHE, "downloading the model (first use only)", 137);
 }
 
 async function getSession() {
@@ -242,6 +246,110 @@ function pooledAudio(wav, segs, name) {
   }
 }
 
+// ---- English check: an English speech recogniser (wav2vec2-base-960h, int8 ONNX) tells us where real English words are spoken ----
+// A bin that the main model calls an Indian language is switched to English when at least 25 % of the surrounding ~4 s is made of
+// recognised English words of 4+ letters (or common short words). Settings were chosen on 6 real recordings and checked on 6 others.
+const ASR_PARTS = ["model/asr_int8.part0", "model/asr_int8.part1", "model/asr_int8.part2"];
+const ASR_CACHE = "ildiar-asr-v1";
+const ASR_MB = 122;
+const ASR_VOCAB = ["<pad>", "<s>", "</s>", "<unk>", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M", "W", "C", "F", "G", "Y", "P", "B", "V", "K", "'", "X", "J", "Q", "Z"].map((c, i) => c);
+const ASR_CHUNK = 20 * SR;
+const STOP_WORDS = new Set("to of is in on it as at be by he we so or an do go no my me up if am us the and but for you are was not can had has his her him she who did get got let say see too two one out our all any how why now yes".split(" "));
+let asrSession = null, wordSet = null;
+
+async function getAsrSession() {
+  if (asrSession) return asrSession;
+  const bytes = await fetchParts(ASR_PARTS, ASR_CACHE, "downloading the English check (first use only)", ASR_MB);
+  setStatus("preparing the English check...");
+  ort.env.wasm.wasmPaths = "./";
+  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 2, 4) : 1;
+  asrSession = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+  return asrSession;
+}
+
+async function getWordSet() {
+  if (wordSet) return wordSet;
+  const r = await fetch("english_words.txt");
+  if (!r.ok) throw new Error("could not load the English word list");
+  wordSet = new Set((await r.text()).split(/\s+/).filter(Boolean));
+  return wordSet;
+}
+
+// recognised words with start / end times (seconds), from greedy CTC decoding of the 20 ms frames
+async function recognisedWords(wav) {
+  const sess = await getAsrSession();
+  const words = [];
+  const nChunks = Math.ceil(wav.length / ASR_CHUNK);
+  for (let k = 0; k < nChunks; k++) {
+    const a = k * ASR_CHUNK;
+    const x = wav.slice(a, a + ASR_CHUNK);
+    if (x.length < 1600) continue;
+    setStatus(`checking for English: part ${k + 1} of ${nChunks}...`, k / nChunks);
+    await new Promise((r) => setTimeout(r, 20));
+    let mean = 0;
+    for (let i = 0; i < x.length; i++) mean += x[i];
+    mean /= x.length;
+    let v = 0;
+    for (let i = 0; i < x.length; i++) { const d = x[i] - mean; v += d * d; }
+    const sd = Math.sqrt(v / x.length) + 1e-7;
+    const nx = new Float32Array(x.length);
+    for (let i = 0; i < x.length; i++) nx[i] = (x[i] - mean) / sd;
+    const res = await sess.run({ wav: new ort.Tensor("float32", nx, [1, nx.length]) });
+    const lg = res[Object.keys(res)[0]];
+    const T = lg.dims[1], C = lg.dims[2];
+    let cur = "", start = 0, last = 0, prev = -1;
+    for (let t = 0; t < T; t++) {
+      let best = 0, bv = -Infinity;
+      for (let c = 0; c < C; c++) { const val = lg.data[t * C + c]; if (val > bv) { bv = val; best = c; } }
+      if (best === prev) continue;
+      prev = best;
+      const ch = ASR_VOCAB[best];
+      if (best <= 3) continue;                                   // <pad> (blank), <s>, </s>, <unk>
+      if (ch === "|") {
+        if (cur) { words.push([a / SR + start * 0.02, a / SR + (last + 1) * 0.02, cur]); cur = ""; }
+        continue;
+      }
+      if (!cur) start = t;
+      cur += ch.toLowerCase();
+      last = t;
+    }
+    if (cur) words.push([a / SR + start * 0.02, a / SR + (last + 1) * 0.02, cur]);
+  }
+  return words;
+}
+
+function englishEvidence(words, nBins, ws, minLen = 4, smooth = 20) {
+  const v = new Float64Array(nBins);
+  for (const [s, e, w] of words) {
+    if ((ws.has(w) && w.length >= minLen) || STOP_WORDS.has(w)) {
+      const b1 = Math.min(Math.ceil(e / BIN), nBins);
+      for (let b = Math.floor(s / BIN); b < b1; b++) v[b] += Math.max(0, Math.min(e, (b + 1) * BIN) - Math.max(s, b * BIN)) / BIN;
+    }
+  }
+  for (let i = 0; i < nBins; i++) v[i] = Math.min(v[i], 1);
+  // moving average over `smooth` bins, same alignment as numpy.convolve(..., mode="same")
+  const out = new Float64Array(nBins);
+  const left = Math.floor((smooth - 1) / 2), right = smooth - 1 - left;
+  for (let i = 0; i < nBins; i++) {
+    let sum = 0;
+    for (let j = i - right; j <= i + left; j++) if (j >= 0 && j < nBins) sum += v[j];
+    out[i] = sum / smooth;
+  }
+  return out;
+}
+
+// switch speech bins to English where the English evidence is strong; returns how many bins changed
+async function applyEnglishCheck(wav, labels, tau = 0.25) {
+  const ws = await getWordSet();
+  const words = await recognisedWords(wav);
+  const ev = englishEvidence(words, labels.length, ws);
+  let changed = 0;
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] !== SIL && labels[i] !== ENG && ev[i] >= tau) { labels[i] = ENG; changed++; }
+  }
+  return changed;
+}
+
 async function run(file, opts) {
   $("err").textContent = "";
   $("results").hidden = true;
@@ -256,14 +364,21 @@ async function run(file, opts) {
   const t = performance.now();
   const post = await posteriors(wav);
   const { labels, ids } = decode(post, given);
+  const useEng = opts && opts.eng !== undefined ? opts.eng : $("engchk").checked;
+  let engBins = 0;
+  if (useEng) {
+    try { engBins = await applyEnglishCheck(wav, labels); }
+    catch (e) { $("err").textContent = "The English check could not run (" + (e.message || e) + "); showing the result without it."; }
+  }
   const segs = toSegments(labels);
   const name = (file.name || "audio").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60) || "audio";
   lastName = name;
   lastRttm = makeRttm(segs, name);
   $("rttm").textContent = lastRttm || "(no speech found)";
-  $("summary").textContent = ids.length
+  const engNote = useEng ? ` English check: ${(engBins * BIN).toFixed(1)} s switched to English.` : "";
+  $("summary").textContent = (ids.length
     ? "Detected: English, " + ids.map((c) => NAMES[CLASSES[c]]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
-    : "No Indian language detected.";
+    : "No Indian language detected.") + engNote;
   drawPlot(wav, segs, Math.max(0, +$("ws").value || 0), Math.max(2, +$("wl").value || 20));
   pooledAudio(wav, segs, name);
   $("results").hidden = false;
