@@ -1,4 +1,4 @@
-﻿# Indic language diarization - web app
+# Indic language diarization - web app
 
 Live page: https://hsharma9710-star.github.io/indic-language-diarization-web/
 
@@ -13,3 +13,5 @@ file per language. The model runs **inside your browser** (ONNX Runtime Web, Web
 Model, training and accuracy: https://github.com/hsharma9710-star/indic-language-diarization
 (on 27 real recordings about 26 % diarization error with the languages named; the 8-bit model scored 27.6 % vs 28.6 % for the full-precision
 one on an 8-recording check). Research prototype.
+
+Known weak case: Hindi news with Indian-accented English can be labelled all Hindi. The command-line tool on GitHub has an optional English check for this (`english_boost/`); it is not part of the web page.
