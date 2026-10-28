@@ -44,11 +44,11 @@
       <div><label for="l1">Indian language 1</label><select id="l1"></select></div>
       <div><label for="l2">Indian language 2</label><select id="l2"></select></div>
       <div><label for="ws">Picture: start (s)</label><input id="ws" type="number" min="0" value="0"></div>
-      <div><label for="wl">Picture: length (s)</label><input id="wl" type="number" min="2" value="20"></div>
+      <div><label for="wl">Picture: length (s)</label><input id="wl" type="number" min="2" placeholder="whole file (up to 60 s)"></div>
     </div>
     <p><small>Name the languages if you know them (more accurate). Leave both on <i>auto</i> to detect them.</small></p>
     <p><label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input id="engchk" type="checkbox" checked>
-    English check (recommended): finds English that the model missed, e.g. in Hindi news. First use downloads an extra 122 MB.</label></p>
+    English check (recommended): finds English that the model missed, e.g. in Hindi news. First use downloads an extra 72 MB.</label></p>
     <button id="go">Diarize</button>
     <p id="status"></p>
     <progress id="bar" max="1" value="0" hidden></progress>
@@ -76,12 +76,12 @@
 
   <p><small>Research prototype, trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
   languages are named, and automatic language detection is less reliable (it often adds a similar-sounding second language).
-  The English check (on by default) finds much of the English in Hindi news with Indian-accented English, but some is still missed.
-  First use downloads the 137 MB model (cached afterwards). Code, method and results:
+  The English check (on by default) finds most of the English in Hindi news with Indian-accented English, but some is still missed.
+  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). Code, method and results:
   <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
 </main>
 <script src="coi-serviceworker.js"></script>
 <script src="ort.min.js"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

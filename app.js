@@ -246,108 +246,110 @@ function pooledAudio(wav, segs, name) {
   }
 }
 
-// ---- English check: an English speech recogniser (wav2vec2-base-960h, int8 ONNX) tells us where real English words are spoken ----
-// A bin that the main model calls an Indian language is switched to English when at least 25 % of the surrounding ~4 s is made of
-// recognised English words of 4+ letters (or common short words). Settings were chosen on 6 real recordings and checked on 6 others.
-const ASR_PARTS = ["model/asr_int8.part0", "model/asr_int8.part1", "model/asr_int8.part2"];
-const ASR_CACHE = "ildiar-asr-v1";
-const ASR_MB = 122;
-const ASR_VOCAB = ["<pad>", "<s>", "</s>", "<unk>", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M", "W", "C", "F", "G", "Y", "P", "B", "V", "K", "'", "X", "J", "Q", "Z"].map((c, i) => c);
-const ASR_CHUNK = 20 * SR;
-const STOP_WORDS = new Set("to of is in on it as at be by he we so or an do go no my me up if am us the and but for you are was not can had has his her him she who did get got let say see too two one out our all any how why now yes".split(" "));
-let asrSession = null, wordSet = null;
+// ---- English check: Whisper-tiny language detector on sliding 4 s windows (ONNX, fp32) ----
+// For every 4 s window (one every 2 s) the detector gives the probability that the window is English. A speech bin that the main model
+// calls an Indian language is switched to English when the English probability around it is at least 0.3. Settings were chosen on
+// 6 real recordings (English + Malayalam / Kannada) and checked on 6 others.
+const LID_PARTS = ["model/lid_fp32.part0", "model/lid_fp32.part1"];
+const LID_CACHE = "ildiar-lid-v1";
+const LID_MB = 72;
+const LID_EN = 18;                      // position of <|en|> among Whisper's 99 language tokens
+const LID_WIN = 4 * SR, LID_HOP = 2 * SR, LID_THETA = 0.3;
+const N_FFT = 400, FHOP = 160, N_MELS = 80, N_FRAMES = 3000;
+let lidSession = null, melFilters = null, dftCos = null, dftSin = null, hannWin = null, lastEngWindows = 0;
 
-async function getAsrSession() {
-  if (asrSession) return asrSession;
-  const bytes = await fetchParts(ASR_PARTS, ASR_CACHE, "downloading the English check (first use only)", ASR_MB);
+async function getLidSession() {
+  if (lidSession) return lidSession;
+  const bytes = await fetchParts(LID_PARTS, LID_CACHE, "downloading the English check (first use only)", LID_MB);
   setStatus("preparing the English check...");
   ort.env.wasm.wasmPaths = "./";
   ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 2, 4) : 1;
-  asrSession = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
-  return asrSession;
+  lidSession = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+  return lidSession;
 }
 
-async function getWordSet() {
-  if (wordSet) return wordSet;
-  const r = await fetch("english_words.txt");
-  if (!r.ok) throw new Error("could not load the English word list");
-  wordSet = new Set((await r.text()).split(/\s+/).filter(Boolean));
-  return wordSet;
-}
-
-// recognised words with start / end times (seconds), from greedy CTC decoding of the 20 ms frames
-async function recognisedWords(wav) {
-  const sess = await getAsrSession();
-  const words = [];
-  const nChunks = Math.ceil(wav.length / ASR_CHUNK);
-  for (let k = 0; k < nChunks; k++) {
-    const a = k * ASR_CHUNK;
-    const x = wav.slice(a, a + ASR_CHUNK);
-    if (x.length < 1600) continue;
-    setStatus(`checking for English: part ${k + 1} of ${nChunks}...`, k / nChunks);
-    await new Promise((r) => setTimeout(r, 20));
-    let mean = 0;
-    for (let i = 0; i < x.length; i++) mean += x[i];
-    mean /= x.length;
-    let v = 0;
-    for (let i = 0; i < x.length; i++) { const d = x[i] - mean; v += d * d; }
-    const sd = Math.sqrt(v / x.length) + 1e-7;
-    const nx = new Float32Array(x.length);
-    for (let i = 0; i < x.length; i++) nx[i] = (x[i] - mean) / sd;
-    const res = await sess.run({ wav: new ort.Tensor("float32", nx, [1, nx.length]) });
-    const lg = res[Object.keys(res)[0]];
-    const T = lg.dims[1], C = lg.dims[2];
-    let cur = "", start = 0, last = 0, prev = -1;
-    for (let t = 0; t < T; t++) {
-      let best = 0, bv = -Infinity;
-      for (let c = 0; c < C; c++) { const val = lg.data[t * C + c]; if (val > bv) { bv = val; best = c; } }
-      if (best === prev) continue;
-      prev = best;
-      const ch = ASR_VOCAB[best];
-      if (best <= 3) continue;                                   // <pad> (blank), <s>, </s>, <unk>
-      if (ch === "|") {
-        if (cur) { words.push([a / SR + start * 0.02, a / SR + (last + 1) * 0.02, cur]); cur = ""; }
-        continue;
-      }
-      if (!cur) start = t;
-      cur += ch.toLowerCase();
-      last = t;
-    }
-    if (cur) words.push([a / SR + start * 0.02, a / SR + (last + 1) * 0.02, cur]);
+async function loadMelTables() {
+  if (melFilters) return;
+  const r = await fetch("mel_filters.bin");
+  if (!r.ok) throw new Error("could not load the mel filter bank");
+  melFilters = new Float32Array(await r.arrayBuffer());            // [201][80]
+  dftCos = new Float32Array(201 * N_FFT);
+  dftSin = new Float32Array(201 * N_FFT);
+  for (let k = 0; k < 201; k++) for (let n = 0; n < N_FFT; n++) {
+    const a = (2 * Math.PI * ((k * n) % N_FFT)) / N_FFT;
+    dftCos[k * N_FFT + n] = Math.cos(a); dftSin[k * N_FFT + n] = Math.sin(a);
   }
-  return words;
+  hannWin = new Float32Array(N_FFT);
+  for (let n = 0; n < N_FFT; n++) hannWin[n] = 0.5 - 0.5 * Math.cos((2 * Math.PI * n) / N_FFT);
 }
 
-function englishEvidence(words, nBins, ws, minLen = 4, smooth = 20) {
-  const v = new Float64Array(nBins);
-  for (const [s, e, w] of words) {
-    if ((ws.has(w) && w.length >= minLen) || STOP_WORDS.has(w)) {
-      const b1 = Math.min(Math.ceil(e / BIN), nBins);
-      for (let b = Math.floor(s / BIN); b < b1; b++) v[b] += Math.max(0, Math.min(e, (b + 1) * BIN) - Math.max(s, b * BIN)) / BIN;
+// Whisper log-Mel input [80][3000] for one window (zero-padded to 30 s), same recipe as the reference feature extractor
+function melWindow(x) {
+  const L = x.length;
+  const F = Math.min(N_FRAMES, Math.ceil((L + 200) / FHOP));
+  const padded = new Float32Array(200 + L + 400);
+  for (let i = 0; i < 200; i++) padded[i] = x[Math.min(200 - i, L - 1)];     // reflect on the left, zeros on the right
+  padded.set(x, 200);
+  const out = new Float32Array(N_MELS * N_FRAMES).fill(-10);                 // log10(1e-10) for the all-zero padding frames
+  const frame = new Float32Array(N_FFT), pw = new Float32Array(201);
+  for (let f = 0; f < F; f++) {
+    const off = f * FHOP;
+    for (let n = 0; n < N_FFT; n++) frame[n] = padded[off + n] * hannWin[n];
+    for (let k = 0; k < 201; k++) {
+      let re = 0, im = 0;
+      const o = k * N_FFT;
+      for (let n = 0; n < N_FFT; n++) { const v = frame[n]; re += v * dftCos[o + n]; im += v * dftSin[o + n]; }
+      pw[k] = re * re + im * im;
+    }
+    for (let m = 0; m < N_MELS; m++) {
+      let s = 0;
+      for (let k = 0; k < 201; k++) s += pw[k] * melFilters[k * N_MELS + m];
+      out[m * N_FRAMES + f] = Math.log10(Math.max(s, 1e-10));
     }
   }
-  for (let i = 0; i < nBins; i++) v[i] = Math.min(v[i], 1);
-  // moving average over `smooth` bins, same alignment as numpy.convolve(..., mode="same")
+  let mx = -Infinity;
+  for (let i = 0; i < out.length; i++) if (out[i] > mx) mx = out[i];
+  const floor = mx - 8;
+  for (let i = 0; i < out.length; i++) out[i] = (Math.max(out[i], floor) + 4) / 4;
+  return out;
+}
+
+// probability of English at each 200 ms bin, interpolated between the window centres
+async function englishProbability(wav, nBins) {
+  const sess = await getLidSession();
+  await loadMelTables();
+  const starts = [];
+  for (let s = 0; s + LID_WIN <= wav.length; s += LID_HOP) starts.push(s);
+  if (!starts.length) starts.push(0);
+  const centres = [], pen = [];
+  for (let k = 0; k < starts.length; k++) {
+    setStatus(`checking for English: part ${k + 1} of ${starts.length}...`, k / starts.length);
+    await new Promise((r) => setTimeout(r, 10));
+    const x = wav.slice(starts[k], starts[k] + LID_WIN);
+    const res = await sess.run({ mel: new ort.Tensor("float32", melWindow(x), [1, N_MELS, N_FRAMES]) });
+    pen.push(res[Object.keys(res)[0]].data[LID_EN]);
+    centres.push((starts[k] + LID_WIN / 2) / SR);
+  }
+  lastEngWindows = starts.length;
   const out = new Float64Array(nBins);
-  const left = Math.floor((smooth - 1) / 2), right = smooth - 1 - left;
   for (let i = 0; i < nBins; i++) {
-    let sum = 0;
-    for (let j = i - right; j <= i + left; j++) if (j >= 0 && j < nBins) sum += v[j];
-    out[i] = sum / smooth;
+    const t = (i + 0.5) * BIN;
+    if (t <= centres[0]) { out[i] = pen[0]; continue; }
+    if (t >= centres[centres.length - 1]) { out[i] = pen[pen.length - 1]; continue; }
+    let j = 0;
+    while (centres[j + 1] < t) j++;
+    const a = (t - centres[j]) / (centres[j + 1] - centres[j]);
+    out[i] = pen[j] * (1 - a) + pen[j + 1] * a;
   }
   return out;
 }
 
-// switch speech bins to English where the English evidence is strong; returns how many bins changed
-let lastEngWords = 0;
-async function applyEnglishCheck(wav, labels, tau = 0.25) {
-  const ws = await getWordSet();
-  const words = await recognisedWords(wav);
-  lastEngWords = words.filter(([, , w]) => ws.has(w) && w.length >= 4).length;
-  const ev = englishEvidence(words, labels.length, ws);
+// switch speech bins that the main model calls an Indian language to English where the English probability is high
+async function applyEnglishCheck(wav, labels, theta = LID_THETA) {
+  const pen = await englishProbability(wav, labels.length);
   let changed = 0;
   for (let i = 0; i < labels.length; i++) {
-    if (labels[i] !== SIL && labels[i] !== ENG && ev[i] >= tau) { labels[i] = ENG; changed++; }
+    if (labels[i] !== SIL && labels[i] !== ENG && pen[i] >= theta) { labels[i] = ENG; changed++; }
   }
   return changed;
 }
@@ -377,11 +379,12 @@ async function run(file, opts) {
   lastName = name;
   lastRttm = makeRttm(segs, name);
   $("rttm").textContent = lastRttm || "(no speech found)";
-  const engNote = useEng ? ` English check (v2) ran: ${lastEngWords} English words recognised, ${(engBins * BIN).toFixed(1)} s switched to English.` : "  (English check is off.)";
+  const engNote = useEng ? ` English check (v4) ran on ${lastEngWindows} windows: ${(engBins * BIN).toFixed(1)} s switched to English.` : "  (English check is off.)";
   $("summary").textContent = (ids.length
     ? "Detected: English, " + ids.map((c) => NAMES[CLASSES[c]]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
     : "No Indian language detected.") + engNote;
-  drawPlot(wav, segs, Math.max(0, +$("ws").value || 0), Math.max(2, +$("wl").value || 20));
+  const wlv = +$("wl").value;
+  drawPlot(wav, segs, Math.max(0, +$("ws").value || 0), wlv > 0 ? Math.max(2, wlv) : Math.min(wav.length / SR, 60));
   pooledAudio(wav, segs, name);
   $("results").hidden = false;
   setStatus("done.");
@@ -407,4 +410,4 @@ window.addEventListener("DOMContentLoaded", () => {
   $("dlpng").addEventListener("click", () => $("plot").toBlob((b) => download(lastName + "_languages.png", b)));
 });
 
-window.ildiar = { run, decode, pickLanguages, toSegments, CLASSES };   // used by automated tests
+window.ildiar = { run, decode, pickLanguages, toSegments, CLASSES, melWindow, loadMelTables };   // used by automated tests
