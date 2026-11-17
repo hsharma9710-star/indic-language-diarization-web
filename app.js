@@ -10,11 +10,12 @@ const MODEL_PARTS = ["model/model_int8.part0", "model/model_int8.part1", "model/
 const CACHE = "ildiar-model-v1";
 
 // class order of the network output
-const CLASSES = ["sil", "en", "as", "bn", "gu", "hi", "kn", "ml", "mr", "ne", "pa", "sa", "ta", "te", "ur"];
+const CLASSES = ["sil", "en", "as", "bn", "gu", "hi", "kn", "ml", "mr", "ne", "pa", "sa", "ta", "te", "ur", "od"];   // the 15 outputs of the CLSRIL network + "od" (Odia), which only the Whisper-Linear-LD tab produces
+const N_NET = 15;
 const NAMES = { en: "English", as: "Assamese", bn: "Bengali", gu: "Gujarati", hi: "Hindi", kn: "Kannada", ml: "Malayalam",
-                mr: "Marathi", ne: "Nepali", pa: "Punjabi", sa: "Sanskrit", ta: "Tamil", te: "Telugu", ur: "Urdu", sil: "silence / no speech" };
+                mr: "Marathi", ne: "Nepali", pa: "Punjabi", sa: "Sanskrit", ta: "Tamil", te: "Telugu", ur: "Urdu", od: "Odia", sil: "silence / no speech" };
 const SIL = 0, ENG = 1;
-const COLOURS = { en: "#3b82f6", sil: "#9ca3af", order: ["#ec4899", "#22c55e", "#f59e0b"] };
+const COLOURS = { en: "#3b82f6", sil: "#9ca3af", order: ["#ec4899", "#22c55e", "#f59e0b", "#a855f7", "#14b8a6", "#ef4444", "#84cc16", "#06b6d4", "#f97316", "#6366f1"] };
 
 const $ = (id) => document.getElementById(id);
 let session = null;
@@ -24,9 +25,11 @@ function fillSelects() {
   for (const id of ["l1", "l2"]) {
     const s = $(id);
     s.innerHTML = '<option value="auto">auto-detect</option>' +
-      CLASSES.slice(2).map((c) => `<option value="${c}">${NAMES[c]}</option>`).join("");
+      CLASSES.slice(2, N_NET).map((c) => `<option value="${c}">${NAMES[c]}</option>`).join("");
   }
 }
+
+function wasmThreads() { return self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 2, 8) : 1; }
 
 function setStatus(msg, p) {
   $("status").textContent = msg;
@@ -70,7 +73,7 @@ async function getSession() {
   const bytes = await fetchModel();
   setStatus("preparing the model...");
   ort.env.wasm.wasmPaths = "./";
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 2, 4) : 1;
+  ort.env.wasm.numThreads = wasmThreads();
   session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
   return session;
 }
@@ -164,15 +167,15 @@ function toSegments(labels) {
   return segs;
 }
 
-function makeRttm(segs, name) {
+function makeRttm(segs, name, type) {
   return segs.map(([st, du, c]) =>
-    `LANGUAGE ${name} 1 ${st.toFixed(3)} ${du.toFixed(3)} <NA> <NA> ${CLASSES[c].toUpperCase()} <NA> <NA>`).join("\n") + (segs.length ? "\n" : "");
+    `${type || "LANGUAGE"} ${name} 1 ${st.toFixed(3)} ${du.toFixed(3)} <NA> <NA> ${CLASSES[c].toUpperCase()} <NA> <NA>`).join("\n") + (segs.length ? "\n" : "");
 }
 
 function colourFor(c, indicOrder) {
   if (c === ENG) return COLOURS.en;
   const i = indicOrder.indexOf(c);
-  return COLOURS.order[Math.min(i, 2)];
+  return COLOURS.order[Math.min(i, COLOURS.order.length - 1)];
 }
 
 function drawPlot(wav, segs, t0, len) {
@@ -263,7 +266,7 @@ async function getLidSession() {
   const bytes = await fetchParts(LID_PARTS, LID_CACHE, "downloading the English check (first use only)", LID_MB);
   setStatus("preparing the English check...");
   ort.env.wasm.wasmPaths = "./";
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(navigator.hardwareConcurrency || 2, 4) : 1;
+  ort.env.wasm.numThreads = wasmThreads();
   lidSession = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
   return lidSession;
 }
@@ -354,16 +357,38 @@ async function applyEnglishCheck(wav, labels, theta = LID_THETA) {
   return changed;
 }
 
+function audioName(file) {
+  return (file.name || "audio").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60) || "audio";
+}
+
+async function loadAudio(file, maxSeconds) {
+  setStatus("reading the audio...");
+  const wav = await decodeAudio(file);
+  if (wav.length / SR > maxSeconds) throw new Error(`This page accepts up to ${maxSeconds / 60} minutes of audio${maxSeconds === MAX_SECONDS ? "" : " with this model"}; yours is ${(wav.length / SR / 60).toFixed(1)} minutes.`);
+  if (wav.length / SR < 1) throw new Error("The audio is shorter than one second.");
+  return wav;
+}
+
+// show the result cards (both models use them): picture, RTTM, pooled audio and, when a reference RTTM is loaded, the DER
+function showResult(wav, segs, rttm, name, summary) {
+  lastName = name;
+  lastRttm = rttm;
+  $("rttm").textContent = rttm || "(no speech found)";
+  $("summary").textContent = summary;
+  const wlv = +$("wl").value;
+  drawPlot(wav, segs, Math.max(0, +$("ws").value || 0), wlv > 0 ? Math.max(2, wlv) : Math.min(wav.length / SR, 60));
+  pooledAudio(wav, segs, name);
+  $("results").hidden = false;
+  updateDer();
+}
+
 async function run(file, opts) {
   $("err").textContent = "";
   $("results").hidden = true;
   const l1 = (opts && opts.l1) || $("l1").value, l2 = (opts && opts.l2) || $("l2").value;
   const given = [l1, l2].filter((l) => l && l !== "auto").map((l) => CLASSES.indexOf(l));
   if (new Set(given).size !== given.length) throw new Error("Choose two different languages (or leave them on auto-detect).");
-  setStatus("reading the audio...");
-  const wav = await decodeAudio(file);
-  if (wav.length / SR > MAX_SECONDS) throw new Error(`This page accepts up to ${MAX_SECONDS / 60} minutes of audio; yours is ${(wav.length / SR / 60).toFixed(1)} minutes.`);
-  if (wav.length / SR < 1) throw new Error("The audio is shorter than one second.");
+  const wav = await loadAudio(file, MAX_SECONDS);
   await getSession();                       // first use downloads the model; not counted in the processing time
   const t = performance.now();
   const post = await posteriors(wav);
@@ -375,20 +400,123 @@ async function run(file, opts) {
     catch (e) { $("err").textContent = "The English check could not run (" + (e.message || e) + "); showing the result without it."; }
   }
   const segs = toSegments(labels);
-  const name = (file.name || "audio").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60) || "audio";
-  lastName = name;
-  lastRttm = makeRttm(segs, name);
-  $("rttm").textContent = lastRttm || "(no speech found)";
+  const name = audioName(file);
   const engNote = useEng ? ` English check (v4) ran on ${lastEngWindows} windows: ${(engBins * BIN).toFixed(1)} s switched to English.` : "  (English check is off.)";
-  $("summary").textContent = (ids.length
+  const summary = (ids.length
     ? "Detected: English, " + ids.map((c) => NAMES[CLASSES[c]]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
     : "No Indian language detected.") + engNote;
-  const wlv = +$("wl").value;
-  drawPlot(wav, segs, Math.max(0, +$("ws").value || 0), wlv > 0 ? Math.max(2, wlv) : Math.min(wav.length / SR, 60));
-  pooledAudio(wav, segs, name);
-  $("results").hidden = false;
+  showResult(wav, segs, makeRttm(segs, name), name, summary);
   setStatus("done.");
   return { segs, ids, post };
+}
+
+// ---- Whisper-Linear-LD (model by Mohit, github.com/MohitAiry/Whisper-Linear-LD) ----
+// Frozen Whisper-large-v3 encoder (blocks 1-28 as four int8 ONNX shards) + linear probes + Viterbi; see wlld.js for the pipeline.
+const WL_MAX_SECONDS = 180;                                       // one 30 s window takes about 1-2 minutes in a browser
+const WL_SHARDS = [{ parts: 4, mb: 168 }, { parts: 3, mb: 139 }, { parts: 3, mb: 139 }, { parts: 3, mb: 139 }];
+const WL_CACHE = "wlld-model-v1";
+let wlSessions = null, wlProbes = null;
+
+async function getWlSessions() {
+  if (wlSessions) return wlSessions;
+  ort.env.wasm.wasmPaths = "./";
+  ort.env.wasm.numThreads = wasmThreads();
+  const sessions = [];
+  for (let i = 0; i < WL_SHARDS.length; i++) {
+    const parts = Array.from({ length: WL_SHARDS[i].parts }, (_, j) => `model/wl_shard${i}.part${j}`);
+    const bytes = await fetchParts(parts, WL_CACHE, `downloading the Whisper-Linear-LD model (first use only), part ${i + 1} of ${WL_SHARDS.length}`, WL_SHARDS[i].mb);
+    setStatus(`preparing the model, part ${i + 1} of ${WL_SHARDS.length}...`);
+    sessions.push(await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "disabled" }));
+  }
+  const [pb, mb] = await Promise.all(["wlld/probe.bin", "wlld/mel128.bin"].map((u) => fetch(u).then((r) => { if (!r.ok) throw new Error("could not load " + u); return r.arrayBuffer(); })));
+  wlld.initMel(new Float32Array(mb));
+  wlProbes = wlld.loadProbes(new Float32Array(pb));
+  wlSessions = sessions;
+  return sessions;
+}
+
+async function wlEncode(sessions, mel) {
+  let t = new ort.Tensor("float32", mel, [1, 128, 3000]);
+  for (const s of sessions) {
+    const r = await s.run({ x: t });
+    t = r[Object.keys(r)[0]];
+  }
+  return t.data;                                                  // block-28 output, [1500][1280]
+}
+
+async function runWl(file) {
+  $("err").textContent = "";
+  $("results").hidden = true;
+  const wav = await loadAudio(file, WL_MAX_SECONDS);
+  const sessions = await getWlSessions();                         // first use downloads the model; not counted in the processing time
+  const t = performance.now();
+  const { x, T } = await wlld.features(wav, (mel) => wlEncode(sessions, mel), async (k, n) => {
+    const left = k > 0 ? ` about ${Math.max(1, Math.round(((performance.now() - t) / k) * (n - k) / 60000))} min left` : "";
+    setStatus(`analysing with Whisper-large-v3: window ${k + 1} of ${n} (30 s each, 1-2 minutes per window)...${left}`, k / n);
+    await new Promise((r) => setTimeout(r, 20));                  // let the page repaint
+  });
+  setStatus("decoding...");
+  await new Promise((r) => setTimeout(r, 20));
+  const name = audioName(file);
+  const r = wlld.decode(x, T, wlProbes);
+  const segs = r.segs.map(([s, e, l]) => [s, e - s, CLASSES.indexOf(l.toLowerCase())]);
+  const summary = (r.langs.length
+    ? "Detected: " + r.langs.map((l) => NAMES[l.toLowerCase()]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
+    : "No speech found.") + "  Model: Whisper-Linear-LD (5-seed ensemble). English is one of its ten languages, so no separate English check is used.";
+  showResult(wav, segs, wlld.toRttm(r.segs, name), name, summary);
+  setStatus("done.");
+  return { segs, langs: r.langs };
+}
+
+// ---- reference RTTM and DER ----
+let refTurns = null;
+
+function pct(x) { return Number.isFinite(x) ? x.toFixed(2) + " %" : "n/a"; }
+function sec(x) { return x.toFixed(1) + " s"; }
+
+function refForScoring() {
+  if (!refTurns) return null;
+  const ids = ldDer.fileIds(refTurns);
+  if (ids.length <= 1) return refTurns;
+  const sel = $("refid").value || ids[0];
+  return refTurns.filter((t) => t.file === sel);
+}
+
+function updateDer() {
+  const card = $("dercard"), out = $("derout");
+  const ref = refForScoring();
+  if (!ref || !lastRttm) { card.hidden = true; return; }
+  card.hidden = false;
+  try {
+    const sys = ldDer.parseRttm(lastRttm).map((t) => ({ ...t, file: "sys" }));
+    const refOne = ref.map((t) => ({ ...t, file: "ref" }));
+    const strict = ldDer.score(refOne, sys, { collar: 0, ignoreOverlaps: false });
+    const lenient = ldDer.score(refOne, sys, { collar: 0.25, ignoreOverlaps: true });
+    const f = strict.files[0];
+    const rows = f.mapping.map((m) => `<tr><td>${m.ref}</td><td>${m.sys || "(none)"}</td><td>${sec(m.scored)}</td><td>${sec(m.miss)}</td><td>${sec(m.conf)}</td></tr>`).join("");
+    out.innerHTML =
+      `<p style="margin:0 0 4px"><b>DER, strict</b> <small>(no collar, overlapped speech scored: the official DISPLACE setting)</small>: <span style="font-size:1.5rem;font-weight:700">${pct(strict.der)}</span></p>` +
+      `<p style="margin:0 0 10px"><b>DER, lenient</b> <small>(0.25 s collar, overlapped speech excluded)</small>: <span style="font-size:1.5rem;font-weight:700">${pct(lenient.der)}</span></p>` +
+      `<p>Strict DER is made of <b>${pct(strict.missPct)}</b> missed speech, <b>${pct(strict.faPct)}</b> false alarm and <b>${pct(strict.confPct)}</b> wrong language, ` +
+      `over ${sec(strict.scored)} of reference speech (scoring region ${f.region[0].toFixed(1)}&ndash;${f.region[1].toFixed(1)} s).</p>` +
+      `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.9rem;min-width:420px"><thead><tr style="text-align:left"><th>Reference label</th><th>Matched system label</th><th>Reference speech</th><th>Missed</th><th>Wrong language</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+      `<p><small>Computed in your browser with a port of the NIST md-eval-22 scorer used by dscore (checked against it to within 0.005 DER points). Each reference label is matched to one system label by the best overlap, so anonymous labels such as L1 / L2 also work. Only speech regions are scored: silence is not a class.</small></p>`;
+  } catch (e) {
+    out.textContent = "Could not compute the DER: " + (e.message || e);
+  }
+}
+
+async function loadReference(file) {
+  const text = await file.text();
+  const turns = ldDer.parseRttm(text);
+  if (!turns.length) throw new Error("No RTTM lines were found in that file (expected: TYPE file-id channel start duration <NA> <NA> label ...).");
+  refTurns = turns;
+  const ids = ldDer.fileIds(turns), sel = $("refid");
+  sel.innerHTML = ids.map((i) => `<option value="${i}">${i}</option>`).join("");
+  sel.value = ids.find((i) => i === lastName || i.startsWith(lastName)) || ids[0];
+  sel.hidden = ids.length <= 1;
+  $("refinfo").textContent = `${file.name}: ${turns.length} segments, ${ids.length} recording${ids.length > 1 ? "s" : ""}, labels ${[...new Set(turns.map((t) => t.label))].sort().join(", ")}.`;
+  updateDer();
 }
 
 function download(filename, blob) {
@@ -397,17 +525,43 @@ function download(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
+let tab = "ours";
+const LEAD = {
+  ours: "Upload a recording and get <b>(a)</b> an RTTM file, <b>(b)</b> the waveform coloured by language, and <b>(c)</b> one pooled audio file per language. Everything runs <b>inside your browser</b>: your audio is never uploaded or stored.",
+  wl: "The same page with a second model: <b>Whisper-Linear-LD</b> by Mohit (frozen Whisper-large-v3 encoder + linear probe, 10 languages, no language needs to be named). Same outputs, and everything still runs <b>inside your browser</b>."
+};
+function setTab(t) {
+  tab = t;
+  $("tabOurs").setAttribute("aria-selected", String(t === "ours"));
+  $("tabWl").setAttribute("aria-selected", String(t === "wl"));
+  document.querySelectorAll(".oursOnly").forEach((e) => { e.hidden = t !== "ours"; });
+  document.querySelectorAll(".wlOnly").forEach((e) => { e.hidden = t !== "wl"; });
+  $("lead").innerHTML = LEAD[t];
+  $("results").hidden = true;
+  $("err").textContent = "";
+  setStatus("");
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   fillSelects();
+  setTab("ours");
+  $("tabOurs").addEventListener("click", () => setTab("ours"));
+  $("tabWl").addEventListener("click", () => setTab("wl"));
   $("go").addEventListener("click", async () => {
     const f = $("file").files[0];
     if (!f) { $("err").textContent = "Please choose an audio file first."; return; }
     $("go").disabled = true;
-    try { await run(f); } catch (e) { $("err").textContent = String(e.message || e); setStatus(""); }
+    try { await (tab === "wl" ? runWl(f) : run(f)); } catch (e) { $("err").textContent = String(e.message || e); setStatus(""); }
     $("go").disabled = false;
   });
+  $("refrttm").addEventListener("change", async () => {
+    const f = $("refrttm").files[0];
+    if (!f) { refTurns = null; $("refinfo").textContent = ""; $("refid").hidden = true; updateDer(); return; }
+    try { await loadReference(f); } catch (e) { refTurns = null; $("refinfo").textContent = ""; $("err").textContent = String(e.message || e); updateDer(); }
+  });
+  $("refid").addEventListener("change", updateDer);
   $("dlrttm").addEventListener("click", () => download(lastName + ".rttm", new Blob([lastRttm], { type: "text/plain" })));
   $("dlpng").addEventListener("click", () => $("plot").toBlob((b) => download(lastName + "_languages.png", b)));
 });
 
-window.ildiar = { run, decode, pickLanguages, toSegments, CLASSES, melWindow, loadMelTables };   // used by automated tests
+window.ildiar = { run, runWl, decode, pickLanguages, toSegments, CLASSES, melWindow, loadMelTables, loadReference, updateDer, setTab };   // used by automated tests

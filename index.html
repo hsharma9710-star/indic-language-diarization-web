@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Indic language diarization</title>
-<meta name="description" content="Upload speech that mixes English and up to two Indian languages and get an RTTM file, a language-coloured waveform and pooled audio per language. Runs entirely in your browser; nothing is uploaded.">
+<meta name="description" content="Upload speech that mixes English and Indian languages and get an RTTM file, a language-coloured waveform and pooled audio per language, optionally scored against a reference RTTM (DER). Two models to choose from. Runs entirely in your browser; nothing is uploaded.">
 <style>
   :root { --bg:#ffffff; --fg:#111827; --muted:#6b7280; --card:#f3f4f6; --line:#d1d5db; --accent:#2563eb; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0f172a; --fg:#e5e7eb; --muted:#94a3b8; --card:#1e293b; --line:#334155; --accent:#60a5fa; } }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
   main { max-width:880px; margin:0 auto; padding:24px 16px 64px; }
   h1 { font-size:1.6rem; margin:0 0 4px; }
@@ -19,6 +20,9 @@
   .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
   button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 18px; font:inherit; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.5; cursor:not-allowed; }
+  .tabs { display:flex; gap:8px; margin:0 0 16px; flex-wrap:wrap; }
+  .tabs button { background:var(--card); color:var(--fg); border:1px solid var(--line); }
+  .tabs button[aria-selected=true] { background:var(--accent); color:#fff; border-color:var(--accent); }
   progress { width:100%; height:14px; }
   #status { color:var(--muted); min-height:1.4em; }
   #err { color:#dc2626; font-weight:600; }
@@ -29,27 +33,41 @@
   .dot { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
   small { color:var(--muted); }
   a { color:var(--accent); }
+  th, td { padding:4px 8px; border-bottom:1px solid var(--line); text-align:left; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Language diarization: English + up to two Indian languages</h1>
-  <p class="lead">Upload a recording and get <b>(a)</b> an RTTM file, <b>(b)</b> the waveform coloured by language, and <b>(c)</b> one pooled audio file per language.
-  Everything runs <b>inside your browser</b>: your audio is never uploaded or stored.</p>
+  <h1>Language diarization: English + Indian languages</h1>
+  <div class="tabs" role="tablist">
+    <button id="tabOurs" role="tab" aria-selected="true">Our model (English + up to 2 Indian languages)</button>
+    <button id="tabWl" role="tab" aria-selected="false">Whisper-Linear-LD (10 languages)</button>
+  </div>
+  <p class="lead" id="lead"></p>
 
   <div class="card">
-    <label for="file">Audio file (wav, mp3, m4a, flac, ogg &mdash; up to 5 minutes)</label>
+    <label for="file">Audio file (wav, mp3, m4a, flac, ogg &mdash; up to 5 minutes; 3 minutes for Whisper-Linear-LD)</label>
     <input id="file" type="file" accept="audio/*,video/mp4">
     <div class="row" style="margin-top:12px">
-      <div><label for="l1">Indian language 1</label><select id="l1"></select></div>
-      <div><label for="l2">Indian language 2</label><select id="l2"></select></div>
+      <div class="oursOnly"><label for="l1">Indian language 1</label><select id="l1"></select></div>
+      <div class="oursOnly"><label for="l2">Indian language 2</label><select id="l2"></select></div>
       <div><label for="ws">Picture: start (s)</label><input id="ws" type="number" min="0" value="0"></div>
       <div><label for="wl">Picture: length (s)</label><input id="wl" type="number" min="2" placeholder="whole file (up to 60 s)"></div>
     </div>
-    <p><small>Name the languages if you know them (more accurate). Leave both on <i>auto</i> to detect them.</small></p>
-    <p><label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input id="engchk" type="checkbox" checked>
+    <p class="oursOnly"><small>Name the languages if you know them (more accurate). Leave both on <i>auto</i> to detect them.</small></p>
+    <p class="oursOnly"><label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input id="engchk" type="checkbox" checked>
     English check (recommended): finds English that the model missed, e.g. in Hindi news. First use downloads an extra 72 MB.</label></p>
-    <button id="go">Diarize</button>
+    <p class="wlOnly"><small>This model finds the languages by itself (English, Hindi, Kannada, Malayalam, Tamil, Telugu, Assamese, Bengali, Marathi, Odia). It is large: the first use downloads about 560 MB (cached afterwards) and every 30 s of audio takes 1&ndash;2 minutes to analyse on a normal laptop, so this tab accepts up to 3 minutes and a short clip is the best way to try it.
+    Model and method: <a href="https://github.com/MohitAiry/Whisper-Linear-LD">github.com/MohitAiry/Whisper-Linear-LD</a>.</small></p>
+
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <label for="refrttm">Reference RTTM (optional): score the result and get the DER</label>
+      <input id="refrttm" type="file" accept=".rttm,.txt,text/plain">
+      <select id="refid" hidden style="margin-top:8px"></select>
+      <p style="margin:6px 0 0"><small id="refinfo">If the file holds several recordings, pick the one that belongs to this audio. You can load the reference before or after diarizing.</small></p>
+    </div>
+
+    <p style="margin-top:14px"><button id="go">Diarize</button></p>
     <p id="status"></p>
     <progress id="bar" max="1" value="0" hidden></progress>
     <p id="err"></p>
@@ -63,6 +81,10 @@
       <canvas id="plot" width="1600" height="420"></canvas>
       <p><button id="dlpng">Download picture (PNG)</button></p>
     </div>
+    <div class="card" id="dercard" hidden>
+      <h2 style="margin-top:0">Score against the reference (DER)</h2>
+      <div id="derout"></div>
+    </div>
     <div class="card">
       <h2 style="margin-top:0">RTTM</h2>
       <pre id="rttm"></pre>
@@ -74,14 +96,17 @@
     </div>
   </div>
 
-  <p><small>Research prototype, trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
+  <p><small>Research prototype. <b>Our model</b> is trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
   languages are named, and automatic language detection is less reliable (it often adds a similar-sounding second language).
   The English check (on by default) finds most of the English in Hindi news with Indian-accented English, but some is still missed.
-  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). Code, method and results:
-  <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
+  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). <b>Whisper-Linear-LD</b> is a separate model by Mohit; it is run here as an
+  8-bit quantised copy of the encoder, so its results can differ slightly from the original GPU code. The DER is computed with a port of the NIST scorer (dscore).
+  Code, method and results: <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
 </main>
 <script src="coi-serviceworker.js"></script>
 <script src="ort.min.js"></script>
-<script src="app.js?v=5"></script>
+<script src="der.js?v=1"></script>
+<script src="wlld.js?v=1"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
