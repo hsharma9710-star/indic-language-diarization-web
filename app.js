@@ -528,7 +528,7 @@ function download(filename, blob) {
 let tab = "ours";
 const LEAD = {
   ours: "Upload a recording and get <b>(a)</b> an RTTM file, <b>(b)</b> the waveform coloured by language, and <b>(c)</b> one pooled audio file per language. Everything runs <b>inside your browser</b>: your audio is never uploaded or stored.",
-  wl: "The same page with a second model: <b>Whisper-Linear-LD</b> by Mohit (frozen Whisper-large-v3 encoder + linear probe, 10 languages, no language needs to be named). Same outputs, and everything still runs <b>inside your browser</b>."
+  wl: "Upload a recording and get <b>(a)</b> an RTTM file, <b>(b)</b> the waveform coloured by language, and <b>(c)</b> one pooled audio file per language. Everything runs <b>inside your browser</b>: your audio is never uploaded or stored."
 };
 function setTab(t) {
   tab = t;

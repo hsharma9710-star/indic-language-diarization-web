@@ -40,13 +40,13 @@
 <main>
   <h1>Language diarization: English + Indian languages</h1>
   <div class="tabs" role="tablist">
-    <button id="tabOurs" role="tab" aria-selected="true">Our model (English + up to 2 Indian languages)</button>
-    <button id="tabWl" role="tab" aria-selected="false">Whisper-Linear-LD (10 languages)</button>
+    <button id="tabOurs" role="tab" aria-selected="true">CLSRIL-Transformer-LD</button>
+    <button id="tabWl" role="tab" aria-selected="false">Whisper-Linear-LD</button>
   </div>
   <p class="lead" id="lead"></p>
 
   <div class="card">
-    <label for="file">Audio file (wav, mp3, m4a, flac, ogg &mdash; up to 5 minutes; 3 minutes for Whisper-Linear-LD)</label>
+    <label for="file">Audio file</label>
     <input id="file" type="file" accept="audio/*,video/mp4">
     <div class="row" style="margin-top:12px">
       <div class="oursOnly"><label for="l1">Indian language 1</label><select id="l1"></select></div>
@@ -54,17 +54,14 @@
       <div><label for="ws">Picture: start (s)</label><input id="ws" type="number" min="0" value="0"></div>
       <div><label for="wl">Picture: length (s)</label><input id="wl" type="number" min="2" placeholder="whole file (up to 60 s)"></div>
     </div>
-    <p class="oursOnly"><small>Name the languages if you know them (more accurate). Leave both on <i>auto</i> to detect them.</small></p>
     <p class="oursOnly"><label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input id="engchk" type="checkbox" checked>
-    English check (recommended): finds English that the model missed, e.g. in Hindi news. First use downloads an extra 72 MB.</label></p>
-    <p class="wlOnly"><small>This model finds the languages by itself (English, Hindi, Kannada, Malayalam, Tamil, Telugu, Assamese, Bengali, Marathi, Odia). It is large: the first use downloads about 560 MB (cached afterwards) and every 30 s of audio takes 1&ndash;2 minutes to analyse on a normal laptop, so this tab accepts up to 3 minutes and a short clip is the best way to try it.
-    Model and method: <a href="https://github.com/MohitAiry/Whisper-Linear-LD">github.com/MohitAiry/Whisper-Linear-LD</a>.</small></p>
+    English check (recommended): finds English that the model missed, e.g. in Hindi news.</label></p>
 
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
       <label for="refrttm">Reference RTTM (optional): score the result and get the DER</label>
       <input id="refrttm" type="file" accept=".rttm,.txt,text/plain">
       <select id="refid" hidden style="margin-top:8px"></select>
-      <p style="margin:6px 0 0"><small id="refinfo">If the file holds several recordings, pick the one that belongs to this audio. You can load the reference before or after diarizing.</small></p>
+      <p style="margin:6px 0 0"><small id="refinfo"></small></p>
     </div>
 
     <p style="margin-top:14px"><button id="go">Diarize</button></p>
@@ -96,10 +93,10 @@
     </div>
   </div>
 
-  <p><small>Research prototype. <b>Our model</b> is trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
+  <p><small>Research prototype. <b>CLSRIL-Transformer-LD</b> is trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
   languages are named, and automatic language detection is less reliable (it often adds a similar-sounding second language).
   The English check (on by default) finds most of the English in Hindi news with Indian-accented English, but some is still missed.
-  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). <b>Whisper-Linear-LD</b> is a separate model by Mohit; it is run here as an
+  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). <b>Whisper-Linear-LD</b> is a separate model by Mohit (<a href="https://github.com/MohitAiry/Whisper-Linear-LD">github.com/MohitAiry/Whisper-Linear-LD</a>); it is run here as an
   8-bit quantised copy of the encoder, so its results can differ slightly from the original GPU code. The DER is computed with a port of the NIST scorer (dscore).
   Code, method and results: <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
 </main>
@@ -107,6 +104,6 @@
 <script src="ort.min.js"></script>
 <script src="der.js?v=1"></script>
 <script src="wlld.js?v=1"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
