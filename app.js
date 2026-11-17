@@ -401,10 +401,7 @@ async function run(file, opts) {
   }
   const segs = toSegments(labels);
   const name = audioName(file);
-  const engNote = useEng ? ` English check (v4) ran on ${lastEngWindows} windows: ${(engBins * BIN).toFixed(1)} s switched to English.` : "  (English check is off.)";
-  const summary = (ids.length
-    ? "Detected: English, " + ids.map((c) => NAMES[CLASSES[c]]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
-    : "No Indian language detected.") + engNote;
+    const summary = "";
   showResult(wav, segs, makeRttm(segs, name), name, summary);
   setStatus("done.");
   return { segs, ids, post };
@@ -460,9 +457,7 @@ async function runWl(file) {
   const name = audioName(file);
   const r = wlld.decode(x, T, wlProbes);
   const segs = r.segs.map(([s, e, l]) => [s, e - s, CLASSES.indexOf(l.toLowerCase())]);
-  const summary = (r.langs.length
-    ? "Detected: " + r.langs.map((l) => NAMES[l.toLowerCase()]).join(", ") + `  (processed in ${((performance.now() - t) / 1000).toFixed(0)} s)`
-    : "No speech found.") + "  Model: Whisper-Linear-LD (5-seed ensemble). English is one of its ten languages, so no separate English check is used.";
+  const summary = "";
   showResult(wav, segs, wlld.toRttm(r.segs, name), name, summary);
   setStatus("done.");
   return { segs, langs: r.langs };
@@ -521,7 +516,7 @@ async function loadReference(file) {
   sel.innerHTML = ids.map((i) => `<option value="${i}">${i}</option>`).join("");
   sel.value = ids.find((i) => i === lastName || i.startsWith(lastName)) || ids[0];
   sel.hidden = ids.length <= 1;
-  $("refinfo").textContent = `${file.name}: ${turns.length} segments, ${ids.length} recording${ids.length > 1 ? "s" : ""}, labels ${[...new Set(turns.map((t) => t.label))].sort().join(", ")}.`;
+  $("refinfo").textContent = "";
   updateDer();
 }
 

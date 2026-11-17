@@ -93,17 +93,13 @@
     </div>
   </div>
 
-  <p><small>Research prototype. <b>CLSRIL-Transformer-LD</b> is trained on synthetic code-switched speech: on real conversations about one 200 ms bin in four is wrong when the
-  languages are named, and automatic language detection is less reliable (it often adds a similar-sounding second language).
-  The English check (on by default) finds most of the English in Hindi news with Indian-accented English, but some is still missed.
-  First use downloads the 137 MB model plus 72 MB for the English check (cached afterwards). <b>Whisper-Linear-LD</b> is a separate model by Mohit (<a href="https://github.com/MohitAiry/Whisper-Linear-LD">github.com/MohitAiry/Whisper-Linear-LD</a>); it is run here as an
-  8-bit quantised copy of the encoder, so its results can differ slightly from the original GPU code. The DER is computed with a port of the NIST scorer (dscore).
-  Code, method and results: <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a>.</small></p>
+  <p><small>CLSRIL-Transformer-LD: <a href="https://github.com/hsharma9710-star/indic-language-diarization">github.com/hsharma9710-star/indic-language-diarization</a><br>
+  Whisper-Linear-LD: <a href="https://github.com/MohitAiry/Whisper-Linear-LD">github.com/MohitAiry/Whisper-Linear-LD</a></small></p>
 </main>
 <script src="coi-serviceworker.js"></script>
 <script src="ort.min.js"></script>
 <script src="der.js?v=2"></script>
 <script src="wlld.js?v=1"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
