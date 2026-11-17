@@ -135,6 +135,7 @@
     const map = S ? assignMax(w, R, S) : new Array(R).fill(-1);
     let scored = 0, miss = 0, fa = 0, conf = 0;
     const perRef = refLabels.map(() => ({ scored: 0, miss: 0, conf: 0 }));
+    const byRef = refLabels.map(() => ({ scored: 0, miss: 0, conf: 0 })), bySys = sysLabels.map(() => 0);
     for (const iv of ivs) {
       const nref = iv.rs.length, nsys = iv.ss.length;
       let ncor = 0;
@@ -144,6 +145,17 @@
       miss += Math.max(0, nref - nsys) * iv.d;
       fa += Math.max(0, nsys - nref) * iv.d;
       conf += (Math.min(nref, nsys) - ncor) * iv.d;
+      // split the three error types by language: misses and wrong-language time go to the reference languages that were not matched,
+      // false-alarm time goes to the system languages that were not matched
+      const unRef = iv.rs.filter((r) => !(map[r] >= 0 && sset.has(map[r])));
+      const rset = new Set(iv.rs.map((r) => map[r]));
+      const unSys = iv.ss.filter((x) => !rset.has(x));
+      for (const r of iv.rs) byRef[r].scored += iv.d;
+      const mi = Math.max(0, nref - nsys), cf = Math.min(nref, nsys) - ncor, fe = Math.max(0, nsys - nref);
+      const tgtR = unRef.length ? unRef : iv.rs;
+      for (const r of tgtR) { byRef[r].miss += (mi * iv.d) / tgtR.length; byRef[r].conf += (cf * iv.d) / tgtR.length; }
+      const tgtS = unSys.length ? unSys : iv.ss;
+      for (const x of tgtS) bySys[x] += (fe * iv.d) / tgtS.length;
       if (nref === 1) {
         const r = iv.rs[0], p = perRef[r];
         p.scored += iv.d;
@@ -151,7 +163,10 @@
       }
     }
     const mapping = refLabels.map((l, i) => ({ ref: l, sys: map[i] >= 0 ? sysLabels[map[i]] : null, ...perRef[i] }));
-    return { scored, miss, fa, conf, errors: miss + fa + conf, der: scored > 0 ? (100 * (miss + fa + conf)) / scored : NaN, mapping, region: [u0, u1] };
+    const byLabel = {};
+    refLabels.forEach((l, i) => { byLabel[l] = { scored: byRef[i].scored, miss: byRef[i].miss, conf: byRef[i].conf, fa: 0 }; });
+    sysLabels.forEach((l, i) => { (byLabel[l] = byLabel[l] || { scored: 0, miss: 0, conf: 0, fa: 0 }).fa += bySys[i]; });
+    return { byLabel, scored, miss, fa, conf, errors: miss + fa + conf, der: scored > 0 ? (100 * (miss + fa + conf)) / scored : NaN, mapping, region: [u0, u1] };
   }
 
   // refTurns / sysTurns: output of parseRttm (any number of file ids; files are paired by id, or the single ids are paired)

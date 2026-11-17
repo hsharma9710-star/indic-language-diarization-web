@@ -19,7 +19,7 @@ English check (CLSRIL-Transformer-LD): Whisper-tiny's language detector (ONNX, f
 
 ## Reference RTTM and DER
 
-Load a reference RTTM (before or after diarizing) and the page scores the result: `der.js` is a JavaScript port of the NIST `md-eval-22` scorer that `dscore` calls. It reports the strict DER (no collar, overlapped speech scored: the official DISPLACE setting) and the lenient DER (0.25 s collar, overlapped speech excluded), the split into missed speech / false alarm / wrong language, and, per reference label, the matched system label (one-to-one optimal mapping, so anonymous labels such as `L1` / `L2` also work). It was checked against `dscore` itself on 56 reference/system pairs (collar 0 and 0.25 s, overlap scored and excluded, overlapping references, anonymous labels): the largest difference was 0.005 DER points.
+Load a reference RTTM (before or after diarizing) and the page shows the DER and, for each language, how much of it is missed speech, false alarm and wrong language (`der.js`, a JavaScript port of the NIST `md-eval-22` scorer that `dscore` calls; 0.25 s collar, overlapped speech excluded). It was checked against `dscore` on 56 reference/system pairs; the largest difference was 0.005 DER points.
 
 ## Second model: Whisper-Linear-LD
 

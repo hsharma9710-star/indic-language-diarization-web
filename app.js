@@ -490,17 +490,23 @@ function updateDer() {
   try {
     const sys = ldDer.parseRttm(lastRttm).map((t) => ({ ...t, file: "sys" }));
     const refOne = ref.map((t) => ({ ...t, file: "ref" }));
-    const strict = ldDer.score(refOne, sys, { collar: 0, ignoreOverlaps: false });
-    const lenient = ldDer.score(refOne, sys, { collar: 0.25, ignoreOverlaps: true });
-    const f = strict.files[0];
-    const rows = f.mapping.map((m) => `<tr><td>${m.ref}</td><td>${m.sys || "(none)"}</td><td>${sec(m.scored)}</td><td>${sec(m.miss)}</td><td>${sec(m.conf)}</td></tr>`).join("");
+    const r = ldDer.score(refOne, sys, { collar: 0.25, ignoreOverlaps: true });
+    const f = r.files[0], tot = r.scored || 1;
+    const NAMES = { en: "English", hi: "Hindi", kn: "Kannada", ml: "Malayalam", ta: "Tamil", te: "Telugu", as: "Assamese", bn: "Bengali", mr: "Marathi", od: "Odia", gu: "Gujarati", pa: "Punjabi", ur: "Urdu", or: "Odia", sa: "Sanskrit" };
+    const ALIAS = { ka: "kn", mal: "ml", eng: "en", hin: "hi", kan: "kn", tam: "ta", tel: "te", ori: "od", or: "od" };
+    const nm = (l) => { const k = String(l).toLowerCase(), c = ALIAS[k] || k; return NAMES[c] || l; };
+    const merged = {};
+    for (const l of Object.keys(f.byLabel)) {
+      const v = f.byLabel[l], n = nm(l), m = (merged[n] = merged[n] || { scored: 0, miss: 0, conf: 0, fa: 0 });
+      m.scored += v.scored; m.miss += v.miss; m.conf += v.conf; m.fa += v.fa;
+    }
+    const labels = Object.keys(merged).sort((x, y) => merged[y].scored + merged[y].fa - merged[x].scored - merged[x].fa);
+    const cell = (x) => `<td style="text-align:right">${(100 * x / tot).toFixed(2)} %</td>`;
+    const rows = labels.map((n) => { const v = merged[n]; return `<tr><td>${n}</td>${cell(v.miss)}${cell(v.fa)}${cell(v.conf)}</tr>`; }).join("");
     out.innerHTML =
-      `<p style="margin:0 0 4px"><b>DER, strict</b> <small>(no collar, overlapped speech scored: the official DISPLACE setting)</small>: <span style="font-size:1.5rem;font-weight:700">${pct(strict.der)}</span></p>` +
-      `<p style="margin:0 0 10px"><b>DER, lenient</b> <small>(0.25 s collar, overlapped speech excluded)</small>: <span style="font-size:1.5rem;font-weight:700">${pct(lenient.der)}</span></p>` +
-      `<p>Strict DER is made of <b>${pct(strict.missPct)}</b> missed speech, <b>${pct(strict.faPct)}</b> false alarm and <b>${pct(strict.confPct)}</b> wrong language, ` +
-      `over ${sec(strict.scored)} of reference speech (scoring region ${f.region[0].toFixed(1)}&ndash;${f.region[1].toFixed(1)} s).</p>` +
-      `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.9rem;min-width:420px"><thead><tr style="text-align:left"><th>Reference label</th><th>Matched system label</th><th>Reference speech</th><th>Missed</th><th>Wrong language</th></tr></thead><tbody>${rows}</tbody></table></div>` +
-      `<p><small>Computed in your browser with a port of the NIST md-eval-22 scorer used by dscore (checked against it to within 0.005 DER points). Each reference label is matched to one system label by the best overlap, so anonymous labels such as L1 / L2 also work. Only speech regions are scored: silence is not a class.</small></p>`;
+      `<p style="margin:0 0 10px"><b>DER</b> = <span style="font-size:1.5rem;font-weight:700">${pct(r.der)}</span></p>` +
+      `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.9rem;min-width:380px"><thead><tr style="text-align:left"><th>Language</th><th style="text-align:right">Missed speech</th><th style="text-align:right">False alarm</th><th style="text-align:right">Wrong language</th></tr></thead><tbody>${rows}` +
+      `<tr style="font-weight:700;border-top:1px solid currentColor"><td>Total</td>${cell(r.miss)}${cell(r.fa)}${cell(r.conf)}</tr></tbody></table></div>`;
   } catch (e) {
     out.textContent = "Could not compute the DER: " + (e.message || e);
   }
