@@ -144,14 +144,40 @@ function pickLanguages(post, maxIndic = 2, ratio = 0.1, minShare = 0.05) {
   return ids;
 }
 
-function decode(post, given) {
-  const ids = given.length ? given : pickLanguages(post);
-  const allowed = [SIL, ENG, ...ids];
-  const labels = post.map((p) => {
-    let best = allowed[0];
-    for (const c of allowed) if (p[c] > p[best]) best = c;
-    return best;
+// Viterbi smoothing over the allowed classes: switching class costs `lam` nats (same idea as the decoder of Whisper-Linear-LD)
+function viterbiSmooth(post, allowed, lam) {
+  const N = post.length, K = allowed.length;
+  const lp = post.map((p) => {
+    const v = allowed.map((c) => Math.log(p[c] + 1e-6));
+    const m = Math.max(...v);
+    let z = 0;
+    for (const x of v) z += Math.exp(x - m);
+    const lz = m + Math.log(z);
+    return v.map((x) => x - lz);
   });
+  let sc = lp[0].slice();
+  const bp = new Uint8Array(N * K);
+  for (let t = 1; t < N; t++) {
+    let bi = 0;
+    for (let k = 1; k < K; k++) if (sc[k] > sc[bi]) bi = k;
+    const sw = sc[bi] - lam, nxt = new Array(K);
+    for (let k = 0; k < K; k++) {
+      if (sw > sc[k]) { nxt[k] = sw + lp[t][k]; bp[t * K + k] = bi; }
+      else { nxt[k] = sc[k] + lp[t][k]; bp[t * K + k] = k; }
+    }
+    sc = nxt;
+  }
+  const path = new Array(N);
+  let bi = 0;
+  for (let k = 1; k < K; k++) if (sc[k] > sc[bi]) bi = k;
+  path[N - 1] = bi;
+  for (let t = N - 1; t > 0; t--) path[t - 1] = bp[t * K + path[t]];
+  return path.map((k) => allowed[k]);
+}
+function decode(post, given) {
+  const ids = given.length ? given : pickLanguages(post, 2, 0.3, 0.1);
+  const allowed = [SIL, ENG, ...ids];
+  const labels = post.length ? viterbiSmooth(post, allowed, 16) : [];
   return { labels, ids };
 }
 
