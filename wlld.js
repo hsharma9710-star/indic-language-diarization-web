@@ -206,7 +206,7 @@
   }
 
   function toRttm(segs, id) {
-    return segs.map(([s, e, l]) => `SPEAKER ${id} 1 ${s.toFixed(3)} ${(e - s).toFixed(3)} <NA> <NA> ${l} <NA> <NA>`).join("\n") + (segs.length ? "\n" : "");
+    return segs.map(([s, e, l]) => `LANGUAGE ${id} 1 ${s.toFixed(3)} ${(e - s).toFixed(3)} <NA> <NA> ${l} <NA> <NA>`).join("\n") + (segs.length ? "\n" : "");
   }
 
   // ---------------------------------------------------------------- whole pipeline
